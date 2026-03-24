@@ -1,0 +1,248 @@
+---
+title: "Lauer_etal_DNAm_blood_models1_2"
+author: "M. Ellesse Lauer"
+date: "2026-03-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Packages:
+library(brms) #version 2.23.0, Bayesian GLMM fitting
+library(dplyr) #version 1.1.4, for data manipulation
+library(tidyr) #version 1.3.1, for data reshaping
+library(mice) #version 3.18.0, multiple imputations package
+library(tibble) #version 3.3.0, for data frame handling
+library(bayesplot) #version 1.14.0, MCMC and PP check plots
+library(tidybayes) #version 3.0.7, Posterior draws extraction
+library(ggplot2) #version 3.5.2, visualizations
+```
+
+```{r}
+options(brms.backend = "cmdstanr") #cmdstanr version 0.8.0, Stan backend for brms package
+```
+
+```{r}
+#Data loading:
+df_blood_imputed <- read.csv("../data/Lauer_etal_DNAm_blood_finalSB.csv")
+```
+
+```{r}
+df_blood_imputed <- df_blood_imputed %>%
+  mutate(
+    timeday = factor(timeday, levels = c("0", "0.25", "1", "6", "9", "12", "14")),
+    CGsite = factor(CGsite),
+    EP = factor(EP),
+    Stage = factor(Stage),
+    BirdID = factor(BirdID)
+  )
+```
+
+```{r, eval=FALSE}
+# Data imputation code: Do not execute if uploading "Lauer_etal_DNAm_blood_imputed.csv" for Bayesian GLMM.
+#Code included for transparency
+imp <- mice(df_blood_imputed[, c("BirdID", "CGsite", "timeday", "DNAm")],
+            m = 5,     
+            method = "logreg", 
+            seed = 123 
+            )
+
+# Extract one complete imputed dataset
+dataset_imp <- complete(imp, 1)
+
+# Replace DNAm column in main dataset
+df_blood_imputed$DNAm <- dataset_imp$DNAm
+df_blood_imputed$DNAm <- as.numeric(as.character(dataset_imp$DNAm))
+```
+
+```{r}
+df_blood_imputed <- df_blood_imputed  %>%
+  mutate(
+    BirdID = factor(BirdID),
+    CGsite = factor(CGsite),
+    timeday = factor(timeday),
+    EP = factor(EP),
+    Stage = factor(Stage),
+    DNAm = as.numeric(DNAm),
+    BodyMass = as.numeric(BodyMass),
+  FinalSBc  = as.numeric(scale(FinalSB)),
+    BodyMassz = as.numeric(scale(BodyMass))
+    )
+
+```
+
+```{r, eval=FALSE}
+write.csv(df_blood_imputed, "../data/Lauer_etal_DNAm_blood_imputed.csv", row.names = FALSE)
+```
+
+```{r}
+# Reading in the new datafile with the centering of BodyMass, FinalSB columns and the imputed DNA methylation in DNAm column
+df_blood_imputed_transformed <- read.csv("../data/Lauer_etal_DNAm_blood_imputed.csv")
+
+# Convert to correct types
+df_blood_imputed_transformed <- df_blood_imputed_transformed %>%
+  mutate(
+    # Factors
+    DNAm = as.factor(DNAm),
+    EP = as.factor(EP),
+    Stage = as.factor(Stage),
+    BirdID = as.factor(BirdID),
+    BodyMassz = as.numeric(BodyMassz),
+    FinalSBc = as.numeric(FinalSBc),
+    timedayz = as.numeric(scale(timeday))
+  )
+
+```
+
+```{r}
+#Defining DNAm model formula:
+#Structure:
+#DNAm binary behavior at each CpG site at each time point
+#timedayz: z-score centered time of infection (0 is the average time during infection)
+#CGsite: categorical identifier of CpG site - CpG 1 is the same here as in Kilvitis et al. 2019
+#EP: categorical high or low determined in Sheldon et al. 2023
+#Stage: juvenile, male, or female - Sheldon et al. 2023
+#BodyMassz: standardized body mass (mean = 0, SD = 1) in grams from capture in Sheldon et al. 2023
+
+#Interaction structure:
+#timedayz*CGsite: interaction of time and CpG site to capture the behaviors of each of the sites at each of the timepoints for DNAm
+#(1+timedayz|p|BirdID): each bird has its own intercept and time slope to account for variability in response to time of infection -> estimates the slope per bird of DNA methylation change over time for each CpG site as a random intercept and a random slope
+#(1|BirdID:CGsite): per bird CpG site offset to account for repeated measures of the same CpG per bird over time; allows different site-specific random intercepts nested within the birds
+
+#Bernoulli distribution with a logit link function because DNAm is a binary variable
+
+form_dnam_sep <- bf(
+  DNAm ~ timedayz * CGsite + EP + Stage + BodyMassz +
+         (1 + timedayz | p | BirdID) + (1 | BirdID:CGsite),
+  family = bernoulli(link = "logit")
+)
+```
+
+```{r}
+
+priors_dnam_sep <- c(
+  set_prior("normal(0, 1)", class = "b"),             
+  set_prior("student_t(3, 0, 1)", class = "sd"),    
+  set_prior("student_t(3, 0, 2.5)", class = "Intercept"), 
+  set_prior("lkj(2)", class = "cor")
+
+)
+```
+
+```{r}
+fit_dnam_sep <- brm(
+  formula = form_dnam_sep,
+  data    = df_blood_imputed_transformed,
+  prior   = priors_dnam_sep,
+  backend = "cmdstanr",
+  chains  = 4,
+  iter    = 2000,
+  warmup  = 1000,
+  threads = threading(2),
+  control = list(adapt_delta = 0.98, max_treedepth = 15),
+  seed    = 1234,
+  refresh = 200
+)
+
+```
+
+```{r}
+summary(fit_dnam_sep)
+mcmc_plot(fit_dnam_sep, type = "trace")
+pp_check(fit_dnam_sep, type = "bars_grouped", group = "CGsite")
+pp_check(fit_dnam_sep, type = "stat", stat = "mean")
+pp_check(fit_dnam_sep, type = "bars_grouped", group = "timedayz")
+```
+
+
+```{r}
+#Extracting slopes
+re_Bird   <- ranef(fit_dnam_sep)$BirdID
+re_Site   <- ranef(fit_dnam_sep)$`BirdID:CGsite` # intercepts only, slopes are from fixed effects
+
+# Extract fixed effects
+fe <- fixef(fit_dnam_sep)
+#Compute per-CpG slope
+# fixed-effect slope for timedayz
+beta_time <- fe["timedayz","Estimate"]
+
+# CpG-specific fixed-effect slope deviations
+site_slopes_fixed <- c(
+  "CG01" = 0,
+  "CG02" = fe["timedayz:CGsiteCG02","Estimate"],
+  "CG03" = fe["timedayz:CGsiteCG03","Estimate"],
+  "CG04" = fe["timedayz:CGsiteCG04","Estimate"],
+  "CG05" = fe["timedayz:CGsiteCG05","Estimate"]
+)
+
+# random slope for each Bird
+bird_slopes <- re_Bird[,,"timedayz"][,"Estimate"]
+names(bird_slopes) <- rownames(re_Bird)
+
+# Build Bird × CpG dataset
+df_slopes <- expand_grid(
+  BirdID = names(bird_slopes),
+  CGsite = names(site_slopes_fixed)
+) %>%
+  mutate(
+    slope = beta_time +
+            site_slopes_fixed[CGsite] +
+            bird_slopes[BirdID]
+  )
+
+#df_slopes should contain 1 slope per bird per site
+
+df_slope_predictors <- df_slopes %>%
+  left_join(df_blood_imputed_transformed %>% 
+              select(BirdID, FinalSBc, EP, Stage, BodyMassz) %>% distinct(),
+            by = "BirdID")
+
+```
+
+
+```{r}
+prior_finalSB_site <- c(
+  set_prior("normal(0, 0.5)", class = "b"),               
+  set_prior("student_t(3, 0, 1)", class = "Intercept"),    
+  set_prior("student_t(3, 0, 1)", class = "sigma"),       
+  set_prior("student_t(3, 0, 1)", class = "sd", group = "CGsite") 
+)
+
+```
+
+
+```{r}
+fit_FinalSB_slope_int <- brm(
+  FinalSBc ~ EP * slope + Stage + BodyMassz + (1 | CGsite),
+  data   = df_slope_predictors,
+  family = gaussian(),
+  prior  = prior_finalSB_site, 
+  chains = 4,
+  iter   = 4000,
+  warmup = 2000,
+  cores = 4,
+  threads = threading(2),
+  control = list(adapt_delta = 0.99),
+  seed = 777
+)
+```
+
+```{r}
+summary(fit_FinalSB_slope_int)
+ce_slope <- conditional_effects(fit_FinalSB_slope_int, effects = "slope")
+plot(ce_slope)
+ce_slope_EP <- conditional_effects(fit_FinalSB_slope_int, effects = "slope:EP")
+plot(ce_slope_EP)
+
+mcmc_plot(fit_FinalSB_slope_int, type = "trace")
+pp_check(fit_FinalSB_slope_int)
+pp_check(fit_FinalSB_slope_int, type = "stat", stat = "mean") 
+pp_check(fit_FinalSB_slope_int, type = "stat_grouped", group = "CGsite", stat = "mean")
+```
+
+```{r session-info}
+sessionInfo()
+```

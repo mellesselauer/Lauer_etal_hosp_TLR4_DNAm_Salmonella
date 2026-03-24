@@ -1,0 +1,196 @@
+---
+title: "Lauer_etal_DNAm_tissue_model3"
+author: "M. Ellesse Lauer"
+date: "2026-03-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Packages
+library(brms) #version 2.23.0, Bayesian GLMM fitting
+library(dplyr) #version 1.1.4, for data manipulation
+library(tidyr) #version 1.3.1, for data reshaping
+library(tibble) #version 3.3.0, for data frame handling
+library(bayesplot) #version 1.14.0, MCMC and PP check plots
+library(tidybayes) #version 3.0.7, Posterior draws extraction
+library(ggplot2) #version 3.5.2, visualizations
+library(emmeans) #version 1.11.2-8, for posterior contrasts among tissues and CpGs
+
+options(brms.backend = "cmdstanr") #cmdstanr version 0.8.0, Stan backend for brms package
+```
+
+```{r}
+df_tissue <- read.csv("../data/Lauer_etal_DNAm_euthanasia_data.csv")
+```
+
+```{r}
+df_tissue <- df_tissue |>
+  mutate(
+    BirdID    = factor(BirdID),
+    Stage     = factor(Stage),   
+    EP        = factor(EP),         
+    Tissue    = factor(Tissue),     
+    SiteEuth = factor(SiteEuth), 
+    DNAm      = as.integer(DNAm),   
+    BodyMassz = as.numeric(scale(BodyMass)), #mean = 0, SD = 1
+    FinalSBc  = as.numeric(scale(FinalSB)) #mean = 0, SD = 1
+  ) 
+ 
+```
+
+```{r}
+df_tissue_centered <- df_tissue %>%
+  mutate(
+    Tissue    = relevel(Tissue, ref = "blood"),
+    EP        = relevel(EP,     ref = "high"),
+    SiteEuth = relevel(SiteEuth, ref = "CG01")
+  )
+```
+
+```{r}
+priors_dnam_tissue <- c(
+  set_prior("normal(0, 1)", class = "b"),                # fixed effects
+  set_prior("student_t(3, 0, 2.5)", class = "Intercept"),# intercept
+  set_prior("student_t(3, 0, 1)", class = "sd")          # random intercept SDs
+)
+```
+
+```{r}
+#Effects structure:
+#Random effect of BirdID -> accounts for the repeated observations per bird (3 tissues with the 5 CpG sites in the same promnoter); captures the underlying baseline methylation probability in each bird and gives the individual-level intercept heterogeneity
+
+#Fixed Effects: Tissue, EP, Stage, BodyMassz, SiteEuth (this is needed as a fixed effect here because there is only one observation of the CpG sites at the tissue level)
+
+#Interaction terms:
+#Tissue*SiteEuth
+#Tissue*EP
+
+fit_dnam_term <- brm(
+  DNAm ~ Tissue * SiteEuth + Tissue*EP + Stage + BodyMassz +
+    (1 | BirdID),
+  data    = df_tissue_centered,
+  family  = bernoulli(link = "logit"),
+  prior   = priors_dnam_tissue,
+  chains  = 4,
+  iter    = 4000,
+  warmup  = 2000,
+  cores   = 4,
+  control = list(adapt_delta = 0.99),
+  seed    = 717
+)
+```
+
+```{r}
+summary(fit_dnam_term)
+conditional_effects(fit_dnam_term)
+
+mcmc_plot(fit_dnam_term, type = "trace")
+
+pp_check(fit_dnam_term, type = "bars")
+pp_check(fit_dnam_term, type = "stat", stat = "mean")
+pp_check(fit_dnam_term, type = "stat_grouped", group = "SiteEuth")
+pp_check(fit_dnam_term, type = "stat_grouped", group = "Tissue")
+
+```
+
+```{r}
+# Ensure factor order matches
+df_tissue_centered <- df_tissue_centered %>%
+  mutate(
+    Tissue  = factor(Tissue, levels = c("blood","liver","spleen")),
+    SiteEuth = factor(SiteEuth, levels = c("CG01","CG02","CG03","CG04","CG05"))
+  )
+
+# This portion is used to generate Figure 3 in manuscript
+newdat <- expand.grid(
+  Tissue   = levels(df_tissue_centered$Tissue),
+  SiteEuth = levels(df_tissue_centered$SiteEuth),
+  EP       = "high",
+  Stage    = "Female",
+  BodyMassz = 0
+)
+
+pred <- fitted(
+  fit_dnam_term,
+  newdata = newdat,
+  re_formula = NA,
+  scale = "response",
+  summary = TRUE
+) %>% as.data.frame()
+
+plot_df <- bind_cols(newdat, pred) %>%
+  rename(p = Estimate, lo = Q2.5, hi = Q97.5)
+
+plot_df$SiteEuth <- factor(
+  plot_df$SiteEuth,
+  levels = c("CG01","CG02","CG03","CG04","CG05"),
+  labels = c("CpG 1","CpG 2","CpG 3","CpG 4","CpG 5")
+)
+```
+
+```{r}
+#Generation of Figure 3 in manuscript
+ggplot(plot_df, aes(x = SiteEuth, y = p, shape = SiteEuth)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = lo, ymax = hi),
+                width = 0.15) +
+  facet_wrap(~ Tissue, nrow = 1) +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_shape_manual(
+    values = c(
+      "CpG 1" = 16,  # filled circle
+      "CpG 2" = 17,  # filled triangle
+      "CpG 3" = 15,  # filled square
+      "CpG 4" = 3,   # plus
+      "CpG 5" = 7    # square-cross-like
+    )
+  ) +
+  theme_classic(base_family = "TimesNewRoman") +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(size = 12, hjust = 0.5, margin = margin(b = 10)),
+    axis.title.x = element_text(size = 12, margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, margin = margin(r = 10)),
+    axis.text = element_text(family = "TimesNewRoman", size = 11),
+    strip.text = element_text(family = "TimesNewRoman", size = 12),
+    legend.position = "none"
+  ) +
+  labs(
+    x = "CpG site",
+    y = "DNA methylation probability (p̂)"
+  )
+```
+
+```{r}
+emm <- emmeans(
+  fit_dnam_term,
+  ~ Tissue | SiteEuth,
+  re_formula = NA   # population-level effects
+)
+
+emm
+#Displays estimated log-odds of DNAm in that CpG site in that tissue, averaged over covariates, as emmean
+
+#Posterior probabilities from emmeans
+pairs(emm, infer = c(TRUE, TRUE))
+
+```
+
+```{r}
+#Probabilities contrasts instead of log-odds
+emmeans(
+  fit_dnam_term,
+  ~ Tissue | SiteEuth,
+  type = "response",
+  re_formula = NA
+)
+```
+
+```{r session-info}
+sessionInfo()
+```
+

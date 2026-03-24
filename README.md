@@ -10,7 +10,7 @@
 
 ## Overview
 
-This repository contains data and code supporting the analyses reported in Lauer et al. (in review). We investigated whether DNA methylation in the putative promoter of *Toll-like Receptor-04* (*TLR4*) was associated with resistance to pathogenic *Salmonella enterica* infection in house sparrows (*Passer domesticus*). Binary DNA methylation was quantified across five CpG sites (CG01–CG05) in blood at seven time points during a 14-day experimental infection, and in liver, blood, and spleen at euthanasia.
+This repository contains data and code supporting the analyses reported in Lauer et al. (in review). We investigated whether DNA methylation in the putative promoter of *Toll-like Receptor-04* (*TLR4*) was associated with resistance to pathogenic *Salmonella enterica* infection in house sparrows (*Passer domesticus*). Binary DNA methylation was quantified across five CpG sites (CpG 1–CpG 5) in blood at seven time points during a 14-day experimental infection, and in liver, blood, and spleen at euthanasia.
 
 Three Bayesian generalized linear mixed models (GLMMs) were fit using the `brms` package in R v4.5.0:
 
@@ -46,7 +46,7 @@ Lauer_etal_TLR4_DNAm_Salmonella/
 ## Data Files
 
 ### `data/Lauer_etal_DNAm_SB_data_summary_full.csv`
-Bird-level summary reference file. One row per individual (n = 36). Contains biological stage, epigenetic potential (EP) category, body mass, average and final *Salmonella* burden, daily rates of change in *Salmonella* burden and DNA methylation, average and variance of DNA methylation per tissue at euthanasia, and per-CpG binary methylation values across all time points and tissues. This file is provided for reference and is not read by the analysis code. Column names are embedded in row 1 of the data; when reading into R use `skip = 1` or open directly in Excel.
+Bird-level summary reference file. One row per individual (n = 36). Contains biological stage (sex), epigenetic potential (EP) category, body mass, average and final *Salmonella* burden, daily rates of change in *Salmonella* burden and DNA methylation, average and variance of DNA methylation per tissue at euthanasia, and per-CpG binary methylation values across all time points and tissues. This file is provided for reference and is not read by the analysis code. Column names are embedded in row 1 of the data; when reading into R use `skip = 1` or open directly in Excel.
 
 ---
 
@@ -56,12 +56,12 @@ Long-format raw blood DNA methylation time series prior to imputation. One row p
 | Column | Description |
 |---|---|
 | BirdID | Individual bird identifier |
-| Stage | Biological stage (Female, Male, Juvenile) |
+| Stage | sex (Female, Male, Juvenile) |
 | BodyMass | Body mass in grams (70 NAs — one bird missing covariate data) |
 | EP | Epigenetic potential category (high, low) |
 | FinalSB | Final *Salmonella* burden at euthanasia (log₁₀ genomic equivalents) |
 | timeday | Collection time point in raw days (0, 0.25, 1, 6, 9, 12, 14) |
-| CGsite | CpG site identity (CG01–CG05; reference in models: CG01) |
+| CGsite | CpG site identity (CpG 1–CpG 5, annotated in code as CG01-CG05; reference in models: CG01) |
 | DNAm | Binary DNA methylation state (0 = unmethylated, 1 = methylated; NA = missing prior to imputation) |
 
 ---
@@ -72,7 +72,7 @@ Long-format blood DNA methylation dataset after imputation of missing values. On
 | Column | Description |
 |---|---|
 | BirdID | Individual bird identifier |
-| Stage | Biological stage (Female, Male, Juvenile) |
+| Stage | sex (Female, Male, Juvenile) |
 | BodyMass | Body mass in grams |
 | EP | Epigenetic potential category (high, low) |
 | FinalSB | Final *Salmonella* burden (log₁₀ genomic equivalents) |
@@ -165,4 +165,4 @@ This repository is licensed under the Creative Commons Attribution 4.0 Internati
 
 ## Contact
 
-Corresponding author: M. Ellesse Lauer — mp11197@georgiasouthern.edu
+Corresponding author: M. Ellesse Lauer — mp11197@georgiasouthern.edu, m.ellesselauer@proton.me

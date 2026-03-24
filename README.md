@@ -2,7 +2,7 @@
 
 **Authors:** M. Ellesse Lauer, Melanie Gibson, J. Dylan Maddox, Daniella Ray, Natalie M. Schrey, Elizabeth Louise Sheldon, Cedric Zimmer, Lynn B. Martin, and Aaron W. Schrey
 
-**Journal:** Journal of Experimental Biology (in review)
+**Journal:** Journal of Experimental Biology intended (in prep)
 
 **DOI:** [placeholder — to be added at acceptance]
 

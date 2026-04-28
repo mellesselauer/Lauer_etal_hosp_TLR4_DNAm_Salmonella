@@ -2,9 +2,9 @@
 
 **Authors:** M. Ellesse Lauer, Melanie Gibson, J. Dylan Maddox, Daniella Ray, Natalie M. Schrey, Elizabeth Louise Sheldon, Cedric Zimmer, Lynn B. Martin, and Aaron W. Schrey
 
-**Journal:** Journal of Experimental Biology intended (in prep)
+**Journal:** Submitted to Journal of Experimental Biology, April 2026 
 
-**DOI:** [placeholder — to be added at acceptance]
+**DOI:** to be assigned upon acceptance via Zenodo
 
 ---
 
@@ -27,10 +27,10 @@ Full model specifications, formal notation, priors, code, and posterior predicti
 ```
 Lauer_etal_TLR4_DNAm_Salmonella/
 ├── data/
-│   ├── Lauer_etal_DNAm_SB_data_summary_full.csv
-│   ├── Lauer_etal_DNAm_blood_finalSB.csv
-│   ├── Lauer_etal_DNAm_blood_imputed.csv
-│   └── Lauer_etal_DNAm_euthanasia_data.csv
+│   ├── DNAm_SB_data_summary_full.csv
+│   ├── DNAm_blood_finalSB.csv
+│   ├── DNAm_blood_imputed.csv
+│   └── DNAm_euthanasia_data.csv
 ├── code/
 │   ├── Lauer_etal_DNAm_blood_models1_2.Rmd
 │   ├── Lauer_etal_DNAm_tissue_model3.Rmd
@@ -45,12 +45,12 @@ Lauer_etal_TLR4_DNAm_Salmonella/
 
 ## Data Files
 
-### `data/Lauer_etal_DNAm_SB_data_summary_full.csv`
+### `data/DNAm_SB_data_summary_full.csv`
 Bird-level summary reference file. One row per individual (n = 36). Contains biological stage (sex), epigenetic potential (EP) category, body mass, average and final *Salmonella* burden, daily rates of change in *Salmonella* burden and DNA methylation, average and variance of DNA methylation per tissue at euthanasia, and per-CpG binary methylation values across all time points and tissues. This file is provided for reference and is not read by the analysis code. Column names are embedded in row 1 of the data; when reading into R use `skip = 1` or open directly in Excel.
 
 ---
 
-### `data/Lauer_etal_DNAm_blood_finalSB.csv`
+### `data/DNAm_blood_finalSB.csv`
 Long-format raw blood DNA methylation time series prior to imputation. One row per bird × CpG site × time point combination (1,155 rows total). This is the input to the imputation step in `Lauer_etal_DNAm_blood_models1_2.Rmd`.
 
 | Column | Description |
@@ -66,7 +66,7 @@ Long-format raw blood DNA methylation time series prior to imputation. One row p
 
 ---
 
-### `data/Lauer_etal_DNAm_blood_imputed.csv`
+### `data/DNAm_blood_imputed.csv`
 Long-format blood DNA methylation dataset after imputation of missing values. One row per bird × CpG site × time point combination (1,155 rows total). Missing DNAm values were imputed using logistic regression in the `mice` package (v3.18.0; m = 5 imputations, seed = 123; one completed dataset carried forward). This is the direct input to Model 1. Standardized variables (`BodyMassz`, `FinalSBc`, `timedayz`) are computed at runtime in the .Rmd from the raw columns present in this file.
 
 | Column | Description |
@@ -82,7 +82,7 @@ Long-format blood DNA methylation dataset after imputation of missing values. On
 
 ---
 
-### `data/Lauer_etal_DNAm_euthanasia_data.csv`
+### `data/DNAm_euthanasia_data.csv`
 Long-format DNA methylation data at euthanasia across three tissues. One row per bird × tissue × CpG site combination (540 rows total). Missing values excluded listwise — not imputed. This is the direct input to Model 3.
 
 | Column | Description |
@@ -101,12 +101,12 @@ Long-format DNA methylation data at euthanasia across three tissues. One row per
 ## Code
 
 ### `code/Lauer_etal_DNAm_blood_models1_2.Rmd`
-RMarkdown script for Models 1 and 2. Reads `Lauer_etal_DNAm_blood_finalSB.csv`, runs imputation (chunk set to `eval=FALSE` — use deposited imputed file directly), fits Model 1, extracts individual slopes from the Model 1 posterior, fits Model 2, and generates all diagnostic and PP check figures cited in the manuscript and supplemental methods.
+RMarkdown script for Models 1 and 2. Reads `DNAm_blood_finalSB.csv`, runs imputation (chunk set to `eval=FALSE` — use deposited imputed file directly), fits Model 1, extracts individual slopes from the Model 1 posterior, fits Model 2, and generates all diagnostic and PP check figures cited in the manuscript and supplemental methods.
 
 **Note on slope extraction:** Individual- and CpG-specific slope estimates (`df_slope_predictors`) are generated as an intermediate object within this script from the fitted Model 1 object and are not deposited separately. To reproduce, run the slope extraction code using the fitted `fit_dnam_sep` object from Model 1.
 
 ### `code/Lauer_etal_DNAm_tissue_model3.Rmd`
-RMarkdown script for Model 3. Reads `Lauer_etal_DNAm_euthanasia_data.csv`, fits Model 3, generates Figure 3 in the manuscript, and runs posterior contrasts using `emmeans`.
+RMarkdown script for Model 3. Reads `DNAm_euthanasia_data.csv`, fits Model 3, generates Figure 3 in the manuscript, and runs posterior contrasts using `emmeans`.
 
 ### `code/Lauer_etal_supplemental_methods_full.docx`
 Supplemental methods document containing: variable mapping table (Table S1) linking R variable names to manuscript labels; full model specifications with formal mathematical notation; imputation, model fitting, slope extraction, and emmeans contrast code; convergence and posterior predictive check figures (Figures S1–S20); and supplemental model output tables (Tables S2–S7).
@@ -115,7 +115,7 @@ Supplemental methods document containing: variable mapping table (Table S1) link
 
 ## Sequence Data
 
-TLR4 promoter sequences (390 bp putative promoter region) are deposited in GenBank under accession number(s): **[placeholder — to be added at submission]**
+Enzymatic-methyl converted TLR4 promoter sequences (288 bp putative promoter region) are deposited in GenBank under accession number(s): **[to be added at submission]**
 
 Sequences were generated using the primers described in Kilvitis et al. (2019, *Journal of Avian Biology* 50(6): e01965).
 
@@ -146,7 +146,7 @@ Full session info including all loaded packages and versions is printed at the e
 
 - Model objects (`fit_dnam_sep`, `fit_FinalSB_slope_int`, `fit_dnam_term`) are not deposited due to file size. Run the .Rmd files to reproduce all results.
 - Fixed random seeds ensure reproducibility: Model 1 seed = 1234; Model 2 seed = 777; Model 3 seed = 717; imputation seed = 123.
-- The imputation chunk in `Lauer_etal_DNAm_blood_models1_2.Rmd` is set to `eval=FALSE`. Load `Lauer_etal_DNAm_blood_imputed.csv` directly as the input to Model 1, or set the chunk to `eval=TRUE` to rerun imputation from `Lauer_etal_DNAm_blood_finalSB.csv` using the fixed seed.
+- The imputation chunk in `Lauer_etal_DNAm_blood_models1_2.Rmd` is set to `eval=FALSE`. Load `DNAm_blood_imputed.csv` directly as the input to Model 1, or set the chunk to `eval=TRUE` to rerun imputation from `DNAm_blood_finalSB.csv` using the fixed seed.
 - Fitting times will vary by hardware. Models used `cmdstanr` backend with 4 chains and threading enabled (`threads = threading(2)`).
 
 ---

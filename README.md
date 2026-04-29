@@ -4,7 +4,7 @@
 
 **Journal:** Submitted to Journal of Experimental Biology, April 2026 
 
-**DOI:** to be assigned upon acceptance via Zenodo
+**DOI:** 10.5281/zenodo.19872493
 
 ---
 

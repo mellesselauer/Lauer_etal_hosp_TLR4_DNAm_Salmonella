@@ -115,7 +115,7 @@ Supplemental methods document containing: variable mapping table (Table S1) link
 
 ## Sequence Data
 
-Enzymatic-methyl converted TLR4 promoter sequences (288 bp putative promoter region) are deposited in GenBank under accession number(s): **[to be added at submission]**
+Enzymatic-methyl converted TLR4 promoter sequences (288 bp putative promoter region) are deposited in GenBank under accession number(s): **BankIt3078750: PZ350615 - PZ350880**
 
 Sequences were generated using the primers described in Kilvitis et al. (2019, *Journal of Avian Biology* 50(6): e01965).
 

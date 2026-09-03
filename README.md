@@ -1,4 +1,4 @@
-# DNA methylation of house sparrows differs over time and among tissues and is related to reduced burden of an experimental infection
+# DNA methylation is related to bacterial burden and differs among tissues in infected house sparrows
 
 **Authors:** M. Ellesse Lauer, Melanie Gibson, J. Dylan Maddox, Daniella Ray, Natalie M. Schrey, Elizabeth Louise Sheldon, Cedric Zimmer, Lynn B. Martin, and Aaron W. Schrey
 
@@ -29,7 +29,6 @@ Lauer_etal_TLR4_DNAm_Salmonella/
 ├── data/
 │   ├── DNAm_SB_data_summary_full.csv
 │   ├── DNAm_blood_finalSB.csv
-│   ├── DNAm_blood_imputed.csv
 │   └── DNAm_euthanasia_data.csv
 ├── code/
 │   ├── Lauer_etal_DNAm_blood_models1_2.Rmd
@@ -51,7 +50,7 @@ Bird-level summary reference file. One row per individual (n = 36). Contains bio
 ---
 
 ### `data/DNAm_blood_finalSB.csv`
-Long-format raw blood DNA methylation time series prior to imputation. One row per bird × CpG site × time point combination (1,155 rows total). This is the input to the imputation step in `Lauer_etal_DNAm_blood_models1_2.Rmd`.
+Long-format raw blood DNA methylation time series. One row per bird × CpG site × time point combination (1,155 rows total). Missing values excluded listwise. This is the input to `Lauer_etal_DNAm_blood_models1_2.Rmd`.
 
 | Column | Description |
 |---|---|
@@ -66,24 +65,8 @@ Long-format raw blood DNA methylation time series prior to imputation. One row p
 
 ---
 
-### `data/DNAm_blood_imputed.csv`
-Long-format blood DNA methylation dataset after imputation of missing values. One row per bird × CpG site × time point combination (1,155 rows total). Missing DNAm values were imputed using logistic regression in the `mice` package (v3.18.0; m = 5 imputations, seed = 123; one completed dataset carried forward). This is the direct input to Model 1. Standardized variables (`BodyMassz`, `FinalSBc`, `timedayz`) are computed at runtime in the .Rmd from the raw columns present in this file.
-
-| Column | Description |
-|---|---|
-| BirdID | Individual bird identifier |
-| Stage | sex (Female, Male, Juvenile) |
-| BodyMass | Body mass in grams |
-| EP | Epigenetic potential category (high, low) |
-| FinalSB | Final *Salmonella* burden (log₁₀ genomic equivalents) |
-| timeday | Collection time point in raw days (0, 0.25, 1, 6, 9, 12, 14) |
-| CGsite | CpG site identity (CG01–CG05; reference in models: CG01) |
-| DNAm | Binary DNA methylation state (0 = unmethylated, 1 = methylated; no missing values after imputation) |
-
----
-
 ### `data/DNAm_euthanasia_data.csv`
-Long-format DNA methylation data at euthanasia across three tissues. One row per bird × tissue × CpG site combination (540 rows total). Missing values excluded listwise — not imputed. This is the direct input to Model 3.
+Long-format DNA methylation data at euthanasia across three tissues. One row per bird × tissue × CpG site combination (540 rows total). Missing values excluded listwise. This is the direct input to `Lauer_etal_DNAm_tissue_model3.Rmd`.
 
 | Column | Description |
 |---|---|
@@ -101,15 +84,15 @@ Long-format DNA methylation data at euthanasia across three tissues. One row per
 ## Code
 
 ### `code/Lauer_etal_DNAm_blood_models1_2.Rmd`
-RMarkdown script for Models 1 and 2. Reads `DNAm_blood_finalSB.csv`, runs imputation (chunk set to `eval=FALSE` — use deposited imputed file directly), fits Model 1, extracts individual slopes from the Model 1 posterior, fits Model 2, and generates all diagnostic and PP check figures cited in the manuscript and supplemental methods.
+RMarkdown script for Models 1 and 2. Reads `DNAm_blood_finalSB.csv`, fits Model 1, extracts CpG specific DNA methylation slopes from the Model 1 posterior, fits Model 2, and generates all diagnostic and PP check figures cited in the manuscript and supplemental methods.
 
 **Note on slope extraction:** Individual- and CpG-specific slope estimates (`df_slope_predictors`) are generated as an intermediate object within this script from the fitted Model 1 object and are not deposited separately. To reproduce, run the slope extraction code using the fitted `fit_dnam_sep` object from Model 1.
 
 ### `code/Lauer_etal_DNAm_tissue_model3.Rmd`
-RMarkdown script for Model 3. Reads `DNAm_euthanasia_data.csv`, fits Model 3, generates Figure 3 in the manuscript, and runs posterior contrasts using `emmeans`.
+RMarkdown script for Model 3. Reads `DNAm_euthanasia_data.csv`, fits Model 3, generates Figure 3 in the manuscript, runs repeated measures correlations among tissues using `rmcorr` and runs posterior contrasts using `emmeans`.
 
 ### `code/Lauer_etal_supplemental_methods_full.docx`
-Supplemental methods document containing: variable mapping table (Table S1) linking R variable names to manuscript labels; full model specifications with formal mathematical notation; imputation, model fitting, slope extraction, and emmeans contrast code; convergence and posterior predictive check figures (Figures S1–S20); and supplemental model output tables (Tables S2–S7).
+Supplemental methods document containing: variable mapping table (Table S1) linking R variable names to manuscript labels; full model specifications with formal mathematical notation; model comparisons, final model fitting, slope extraction, repeated measures correlations among tissues, and emmeans contrast code; convergence and posterior predictive check figures (Figures S1–S20); and supplemental model output tables (Tables S2–S7).
 
 ---
 
@@ -129,7 +112,7 @@ All analyses were conducted in R version 4.5.0 (R Core Team 2025). Key packages:
 |---|---|---|
 | `brms` | 2.23.0 | Bayesian GLMM fitting |
 | `cmdstanr` | 0.8.0 | Stan backend for brms |
-| `mice` | 3.18.0 | Multiple imputation (Models 1 and 2 only) |
+|`rmcorr` | 0.7.0 | Repeated measures correaltions (Model 3 only) |
 | `emmeans` | 1.11.2-8 | Posterior contrasts (Model 3 only) |
 | `dplyr` | 1.1.4 | Data manipulation |
 | `tidyr` | 1.3.1 | Data reshaping |
@@ -153,7 +136,7 @@ Full session info including all loaded packages and versions is printed at the e
 
 ## Citation
 
-Lauer ME, Gibson M, Maddox JD, Ray D, Schrey NM, Sheldon EL, Zimmer C, Martin LB, Schrey AW. (in review). DNA methylation of house sparrows differs over time and among tissues and is related to reduced burden of an experimental infection. *Journal of Experimental Biology*.
+Lauer ME, Gibson M, Maddox JD, Ray D, Schrey NM, Sheldon EL, Zimmer C, Martin LB, Schrey AW. (in review). DNA methylation is related to bacterial burden and differs among tissues in infected house sparrows. *Journal of Experimental Biology*.
 
 ---
 

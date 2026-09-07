@@ -1,7 +1,7 @@
 ---
 title: "Lauer_etal_DNAm_blood_models1_2"
 author: "M. Ellesse Lauer"
-date: "2026-03-23"
+date: "2026-09-04"
 output: html_document
 ---
 
@@ -14,11 +14,11 @@ knitr::opts_chunk$set(echo = TRUE)
 library(brms) #version 2.23.0, Bayesian GLMM fitting
 library(dplyr) #version 1.1.4, for data manipulation
 library(tidyr) #version 1.3.1, for data reshaping
-library(mice) #version 3.18.0, multiple imputations package
 library(tibble) #version 3.3.0, for data frame handling
 library(bayesplot) #version 1.14.0, MCMC and PP check plots
 library(tidybayes) #version 3.0.7, Posterior draws extraction
 library(ggplot2) #version 3.5.2, visualizations
+library(loo) #version 2.8.0, model comparisons
 ```
 
 ```{r}
@@ -27,162 +27,344 @@ options(brms.backend = "cmdstanr") #cmdstanr version 0.8.0, Stan backend for brm
 
 ```{r}
 #Data loading:
-df_blood_imputed <- read.csv("../data/Lauer_etal_DNAm_blood_finalSB.csv")
+df_blood <- read.csv("../data/Lauer_etal_DNAm_blood_finalSB.csv")
 ```
 
 ```{r}
-df_blood_imputed <- df_blood_imputed %>%
+# Z-scoring as standardization for body mass and final SB:
+bodymass_mean <- mean(df_blood$BodyMass, na.rm = TRUE)
+bodymass_sd   <- sd(df_blood$BodyMass,   na.rm = TRUE)
+
+finalsb_mean  <- mean(df_blood$FinalSB,  na.rm = TRUE)
+finalsb_sd    <- sd(df_blood$FinalSB,    na.rm = TRUE)
+
+
+# Apply factors / numeric conversions
+df_blood <- df_blood %>%
   mutate(
-    timeday = factor(timeday, levels = c("0", "0.25", "1", "6", "9", "12", "14")),
-    CGsite = factor(CGsite),
-    EP = factor(EP),
-    Stage = factor(Stage),
-    BirdID = factor(BirdID)
-  )
-```
-
-```{r, eval=FALSE}
-# Data imputation code: Do not execute if uploading "Lauer_etal_DNAm_blood_imputed.csv" for Bayesian GLMM.
-#Code included for transparency
-imp <- mice(df_blood_imputed[, c("BirdID", "CGsite", "timeday", "DNAm")],
-            m = 5,     
-            method = "logreg", 
-            seed = 123 
-            )
-
-# Extract one complete imputed dataset
-dataset_imp <- complete(imp, 1)
-
-# Replace DNAm column in main dataset
-df_blood_imputed$DNAm <- dataset_imp$DNAm
-df_blood_imputed$DNAm <- as.numeric(as.character(dataset_imp$DNAm))
-```
-
-```{r}
-df_blood_imputed <- df_blood_imputed  %>%
-  mutate(
-    BirdID = factor(BirdID),
-    CGsite = factor(CGsite),
-    timeday = factor(timeday),
-    EP = factor(EP),
-    Stage = factor(Stage),
-    DNAm = as.numeric(DNAm),
-    BodyMass = as.numeric(BodyMass),
-  FinalSBc  = as.numeric(scale(FinalSB)),
-    BodyMassz = as.numeric(scale(BodyMass))
-    )
-
-```
-
-```{r, eval=FALSE}
-write.csv(df_blood_imputed, "../data/Lauer_etal_DNAm_blood_imputed.csv", row.names = FALSE)
-```
-
-```{r}
-# Reading in the new datafile with the centering of BodyMass, FinalSB columns and the imputed DNA methylation in DNAm column
-df_blood_imputed_transformed <- read.csv("../data/Lauer_etal_DNAm_blood_imputed.csv")
-
-# Convert to correct types
-df_blood_imputed_transformed <- df_blood_imputed_transformed %>%
-  mutate(
-    # Factors
-    DNAm = as.factor(DNAm),
-    EP = as.factor(EP),
-    Stage = as.factor(Stage),
+    timeday = as.numeric(timeday),
+    CGsite = as.factor(CGsite),
     BirdID = as.factor(BirdID),
-    BodyMassz = as.numeric(BodyMassz),
-    FinalSBc = as.numeric(FinalSBc),
-    timedayz = as.numeric(scale(timeday))
+    BodyMass = as.numeric(BodyMass),
+    DNAm = as.integer(DNAm),
+    BodyMassz = (BodyMass - bodymass_mean) / bodymass_sd,
+    FinalSBc  = (FinalSB  - finalsb_mean)  / finalsb_sd   # qPCR Ct value at euthanasia
   )
 
+
+df_blood <- df_blood %>%
+  mutate(
+    EP     = factor(EP,
+                    levels = c("high","low")),
+    Stage  = factor(Stage,
+                    levels = c("Female","Juvenile","Male")),
+    CGsite = factor(CGsite, levels = c("CG-01","CG-02","CG-03","CG-04","CG-05")),
+    BodyMassz = as.numeric(BodyMassz),
+    FinalSBc = as.numeric(FinalSBc)
+  )
+
+#Z-score time during infection
+timeday_mean <- mean(df_blood$timeday, na.rm = TRUE)
+timeday_sd   <- sd(df_blood$timeday,   na.rm = TRUE)
+
+df_blood <- df_blood %>%
+  mutate(timedayz = (timeday - timeday_mean) / timeday_sd)
 ```
 
+#MODEL COMPARISON for Model 1 - Leave One-Out Cross Validation with `loo`
 ```{r}
-#Defining DNAm model formula:
-#Structure:
+#Candidate model definition, fitting for comparison, and LOO-IC extraction:
+#All use Bernoulli distribution with a logit link function because DNAm is a binary variable
+
 #DNAm binary behavior at each CpG site at each time point
-#timedayz: z-score centered time of infection (0 is the average time during infection)
+#timedayz: z-score centered time of infection (0 is the pre-infection time point)
 #CGsite: categorical identifier of CpG site - CpG 1 is the same here as in Kilvitis et al. 2019
 #EP: categorical high or low determined in Sheldon et al. 2023
-#Stage: juvenile, male, or female - Sheldon et al. 2023
-#BodyMassz: standardized body mass (mean = 0, SD = 1) in grams from capture in Sheldon et al. 2023
+#Stage: juvenile, male, or female - Sheldon et al., 2023
+#BodyMassz: z-score centered body mass in grams taken at capture in Sheldon et al. 2023
 
 #Interaction structure:
-#timedayz*CGsite: interaction of time and CpG site to capture the behaviors of each of the sites at each of the timepoints for DNAm
-#(1+timedayz|p|BirdID): each bird has its own intercept and time slope to account for variability in response to time of infection -> estimates the slope per bird of DNA methylation change over time for each CpG site as a random intercept and a random slope
-#(1|BirdID:CGsite): per bird CpG site offset to account for repeated measures of the same CpG per bird over time; allows different site-specific random intercepts nested within the birds
+#timedayz*CGsite: interaction of time and CpG site to capture the behaviors of each of the sites at each of the timepoints for DNAm - for downstream slope extraction at each CpG site
+#(1+timedayz|BirdID): each bird has its own intercept and time slope to account for variability in response to time of infection; estimates the slope per bird of DNA methylation change over time for each CpG site
+#(1|BirdID:CGsite): random effect for repeated measures over CpG sites nested within Bird ID
 
-#Bernoulli distribution with a logit link function because DNAm is a binary variable
-
-form_dnam_sep <- bf(
+#Model i:
+form_dnam_complex <- bf(
   DNAm ~ timedayz * CGsite + EP + Stage + BodyMassz +
-         (1 + timedayz | p | BirdID) + (1 | BirdID:CGsite),
+         (1 + timedayz | BirdID:CGsite),
+  family = bernoulli(link = "logit")
+)
+
+#Model ii: 
+form_dnam_sep <- bf(
+  DNAm ~ timedayz*CGsite + EP + Stage + BodyMassz +
+         (1 + timedayz | BirdID) + (1 | BirdID:CGsite),
+  family = bernoulli(link = "logit")
+)
+
+#Model iii:
+form_dnam_reduced <- bf(
+  DNAm ~ timedayz + CGsite + EP + Stage + BodyMassz +
+         (1 + timedayz | BirdID) + (1 | BirdID:CGsite),
+  family = bernoulli(link = "logit")
+)
+
+#Model iv:
+form_dnam_cgslopes <- bf(
+  DNAm ~ timedayz * CGsite +
+         (1 + timedayz | BirdID) + (1 | BirdID:CGsite),
   family = bernoulli(link = "logit")
 )
 ```
 
 ```{r}
-
+#Priors for all DNA methylation models:
 priors_dnam_sep <- c(
-  set_prior("normal(0, 1)", class = "b"),             
-  set_prior("student_t(3, 0, 1)", class = "sd"),    
+  set_prior("normal(0, 1)", class = "b"),            
+  set_prior("student_t(3, 0, 1)", class = "sd"),   
   set_prior("student_t(3, 0, 2.5)", class = "Intercept"), 
-  set_prior("lkj(2)", class = "cor")
+  set_prior("lkj(2)", class = "cor")  
 
 )
 ```
 
 ```{r}
-fit_dnam_sep <- brm(
-  formula = form_dnam_sep,
-  data    = df_blood_imputed_transformed,
+#Subsetting the data for all complete cases for all models in comparison
+#Data subset is only used in LOO model comparison. The selected model is fit over the full dataset.
+df_blood_cc <- df_blood %>%
+  filter(complete.cases(DNAm, timedayz, CGsite, EP, Stage, BodyMassz))
+```
+
+```{r}
+#Model fitting for candidate models:
+#Model i:
+fit_complex_loo <- brm(
+  formula = form_dnam_complex,
+  data    = df_blood_cc,
   prior   = priors_dnam_sep,
   backend = "cmdstanr",
   chains  = 4,
-  iter    = 2000,
-  warmup  = 1000,
+  iter    = 6000,
+  warmup  = 3000,
   threads = threading(2),
   control = list(adapt_delta = 0.98, max_treedepth = 15),
   seed    = 1234,
   refresh = 200
 )
 
+#Model ii:
+fit_sep_loo <- brm(
+  formula = form_dnam_sep,
+  data    = df_blood_cc,
+  prior   = priors_dnam_sep,
+  backend = "cmdstanr",
+  chains  = 4,
+  iter    = 6000,
+  warmup  = 3000,
+  threads = threading(2),
+  control = list(adapt_delta = 0.98, max_treedepth = 15),
+  seed    = 1234,
+  refresh = 200
+)
+
+#Model iii:
+fit_reduced_loo <- brm(
+  formula = form_dnam_reduced,
+  data    = df_blood_cc,
+  prior   = priors_dnam_sep,
+  backend = "cmdstanr",
+  chains  = 4,
+  iter    = 6000,
+  warmup  = 3000,
+  threads = threading(2),
+  control = list(adapt_delta = 0.98, max_treedepth = 15),
+  seed    = 1234,
+  refresh = 200
+)
+
+#Model iv:
+fit_cgslopes_loo <- brm(
+  formula = form_dnam_cgslopes,
+  data    = df_blood_cc,
+  prior   = priors_dnam_sep,
+  backend = "cmdstanr",
+  chains  = 4,
+  iter    = 6000,
+  warmup  = 3000,
+  threads = threading(2),
+  control = list(adapt_delta = 0.98, max_treedepth = 15),
+  seed    = 1234,
+  refresh = 200
+)
 ```
 
 ```{r}
-summary(fit_dnam_sep)
-mcmc_plot(fit_dnam_sep, type = "trace")
-pp_check(fit_dnam_sep, type = "bars_grouped", group = "CGsite")
-pp_check(fit_dnam_sep, type = "stat", stat = "mean")
-pp_check(fit_dnam_sep, type = "bars_grouped", group = "timedayz")
+#LOO comparison:
+fit_complex_loo    <- add_criterion(fit_complex_loo,     "loo")
+fit_sep_loo    <- add_criterion(fit_sep_loo,     "loo")
+fit_reduced_loo <- add_criterion(fit_reduced_loo, "loo")
+fit_cgslopes_loo <- add_criterion(fit_cgslopes_loo, "loo")
+loo_compare(fit_complex_loo, fit_sep_loo, fit_reduced_loo, fit_cgslopes_loo)
+```
+
+```{r}
+print(fit_cgslopes_loo$criteria$loo)
+print(fit_reduced_loo$criteria$loo)
+print(fit_sep_loo$criteria$loo)
+print(fit_complex_loo$criteria$loo)
+```
+
+```{r}
+#Prints the metrics used in model comparison:
+#Candidate models
+#eldp_loo and standard error - 
+#p_loo - effective number of parameters, shows the complexity/parsimony trade-offs
+#looic and standard error - 
+#elpd_diff and standard error - 
+
+#Report N = 943 in table heading.
+
+loo_list <- list(
+  fit_cgslopes_loo = fit_cgslopes_loo$criteria$loo,
+  fit_sep          = fit_sep$criteria$loo,
+  fit_minimal_loo  = fit_minimal_loo$criteria$loo,
+  fit_reduced      = fit_reduced$criteria$loo,
+  fit_complex      = fit_complex$criteria$loo
+)
+
+loo_summary <- purrr::map_dfr(loo_list, function(x) {
+  e <- x$estimates
+  tibble::tibble(
+    elpd_loo    = e["elpd_loo","Estimate"], se_elpd_loo = e["elpd_loo","SE"],
+    p_loo       = e["p_loo","Estimate"],    se_p_loo    = e["p_loo","SE"],
+    looic       = e["looic","Estimate"],    se_looic    = e["looic","SE"]
+  )
+}, .id = "Model")
+
+comp <- loo_compare(fit_cgslopes_loo, fit_sep, fit_minimal_loo, fit_reduced, fit_complex)
+comp_df <- as.data.frame(comp) %>% tibble::rownames_to_column("Model") %>%
+  dplyr::select(Model, elpd_diff, se_diff)
+
+loo_table <- dplyr::left_join(loo_summary, comp_df, by = "Model")
+
+loo_table <- loo_table %>%
+  dplyr::mutate(Model = dplyr::recode(Model,
+    fit_cgslopes_loo = "cgslopes (selected)",
+    fit_sep           = "sep (full covariates)",
+    fit_minimal_loo   = "minimal",
+    fit_reduced       = "reduced",
+    fit_complex       = "complex (BirdID:CGsite slope)"
+  ))
+
+loo_table
 ```
 
 
+#Model fitting for Model 1
+
 ```{r}
-#Extracting slopes
-re_Bird   <- ranef(fit_dnam_sep)$BirdID
-re_Site   <- ranef(fit_dnam_sep)$`BirdID:CGsite` # intercepts only, slopes are from fixed effects
+fit_cgslopes <- brm(
+  formula = form_dnam_cgslopes,
+  data    = df_blood,
+  prior   = priors_dnam_sep,
+  backend = "cmdstanr",
+  chains  = 4,
+  iter    = 6000,
+  warmup  = 3000,
+  threads = threading(2),
+  control = list(adapt_delta = 0.98, max_treedepth = 15),
+  seed    = 1234,
+  refresh = 200
+)
+```
+
+```{r}
+summary(fit_cgslopes)
+mcmc_plot(fit_cgslopes, type = "trace")
+pp_check(fit_cgslopes, type = "bars_grouped", group = "CGsite")
+pp_check(fit_cgslopes, type = "stat", stat = "mean")
+pp_check(fit_cgslopes, type = "bars_grouped", group = "timedayz")
+```
+
+```{r}
+#Plot of conditional effects for CpG site DNA methylation across infection:
+ce <- conditional_effects(fit_cgslopes, effects = "timedayz:CGsite")
+ce_df <- ce[["timedayz:CGsite"]]
+
+real_days     <- c(0, 0.25, 1, 6, 9, 12, 14)
+real_timedayz <- (real_days - timeday_mean) / timeday_sd 
+
+points_grid <- expand.grid(
+  timedayz = real_timedayz,
+  CGsite   = levels(df_blood$CGsite)
+)
+
+point_preds <- fitted(fit_cgslopes, newdata = points_grid, re_formula = NA)
+points_df <- cbind(points_grid, estimate__ = point_preds[, "Estimate"])
+
+theme_pub_bw <- theme_classic(base_size = 12, base_family = "Times New Roman") +
+  theme(
+    panel.background  = element_rect(fill = "transparent", color = NA),
+    plot.background   = element_rect(fill = "transparent", color = NA),
+    panel.grid.major  = element_blank(),
+    panel.grid.minor  = element_blank(),
+    axis.line         = element_line(color = "black"),
+    axis.ticks        = element_line(color = "black"),
+    axis.text         = element_text(color = "black", family = "Times New Roman"),
+    axis.title        = element_text(color = "black", family = "Times New Roman"),
+    plot.title        = element_text(hjust = 0, size = 12, face = "plain"),
+    legend.title       = element_blank(),
+    legend.background  = element_rect(fill = "transparent", color = NA),
+    legend.key         = element_rect(fill = "transparent", color = NA)
+  )
+
+cpg_colors <- c("black", "#E69F00", "#0072B2", "#009E73", "#CC79A7")
+cpg_shapes <- c(16, 17, 15, 3, 4)
+cpg_labels <- c("CpG 1", "CpG 2", "CpG 3", "CpG 4", "CpG 5")
+
+p_color <- ggplot(ce_df, aes(x = timedayz, y = estimate__, group = CGsite)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = CGsite), alpha = 0.15, color = NA) +
+  geom_line(aes(color = CGsite), linewidth = 0.75) +
+  geom_point(data = points_df, aes(x = timedayz, y = estimate__, shape = CGsite),
+           color = "black", size = 3.5) +
+  scale_shape_manual(values = cpg_shapes, labels = cpg_labels) +
+  scale_color_manual(values = cpg_colors, labels = cpg_labels) +
+  scale_fill_manual(values = cpg_colors, guide = "none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.25)) +
+  labs(x = "Infection time (standardized)",
+       y = expression("DNA methylation probability" ~ ~ (hat(p))),
+       shape = NULL, color = NULL, title = NULL) +
+  theme_pub_bw
+
+p_color
+```
+
+#Slope extractions:
+```{r}
+# Extract random effects slopes from DNAm model
+re_Bird   <- ranef(fit_cgslopes)$BirdID
+re_Site   <- ranef(fit_cgslopes)$`BirdID:CGsite` # intercepts only, slopes are from fixed effects
 
 # Extract fixed effects
-fe <- fixef(fit_dnam_sep)
-#Compute per-CpG slope
+fe <- fixef(fit_cgslopes)
+#Compute per-site slope
 # fixed-effect slope for timedayz
 beta_time <- fe["timedayz","Estimate"]
 
-# CpG-specific fixed-effect slope deviations
+# site-specific fixed-effect slope deviations
 site_slopes_fixed <- c(
-  "CG01" = 0,
-  "CG02" = fe["timedayz:CGsiteCG02","Estimate"],
-  "CG03" = fe["timedayz:CGsiteCG03","Estimate"],
-  "CG04" = fe["timedayz:CGsiteCG04","Estimate"],
-  "CG05" = fe["timedayz:CGsiteCG05","Estimate"]
+  "CG-01" = 0,
+  "CG-02" = fe["timedayz:CGsiteCGM02","Estimate"],
+  "CG-03" = fe["timedayz:CGsiteCGM03","Estimate"],
+  "CG-04" = fe["timedayz:CGsiteCGM04","Estimate"],
+  "CG-05" = fe["timedayz:CGsiteCGM05","Estimate"]
 )
 
 # random slope for each Bird
 bird_slopes <- re_Bird[,,"timedayz"][,"Estimate"]
 names(bird_slopes) <- rownames(re_Bird)
 
-# Build Bird × CpG dataset
+# Build Bird × Site dataset
 df_slopes <- expand_grid(
   BirdID = names(bird_slopes),
   CGsite = names(site_slopes_fixed)
@@ -195,54 +377,211 @@ df_slopes <- expand_grid(
 
 #df_slopes should contain 1 slope per bird per site
 
+#Merging slopes into bird level traits
 df_slope_predictors <- df_slopes %>%
-  left_join(df_blood_imputed_transformed %>% 
+  left_join(df_blood %>% 
               select(BirdID, FinalSBc, EP, Stage, BodyMassz) %>% distinct(),
             by = "BirdID")
 
 ```
 
 
+#Model 2 LOO comparisons:
 ```{r}
-prior_finalSB_site <- c(
-  set_prior("normal(0, 0.5)", class = "b"),               
-  set_prior("student_t(3, 0, 1)", class = "Intercept"),    
-  set_prior("student_t(3, 0, 1)", class = "sigma"),       
-  set_prior("student_t(3, 0, 1)", class = "sd", group = "CGsite") 
+#Candidate model definition, fitting for comparison, and LOO-IC extraction:
+#All use Gaussian distribution
+
+#FinalSBc = standardized log10 equivalents for Salmonella burden, mean = 0, SD = 1
+
+#Model i:
+form_burden_ep_only <- bf(
+  FinalSBc ~ slope * EP + (1|CGsite),
+  family = gaussian()
+)
+
+#Model ii:
+form_burden_full <- bf(
+  FinalSBc ~ slope * EP + Stage + BodyMassz + (1|CGsite),
+  family = gaussian()
+)
+
+#Model iii:
+form_burden_no_stage <- bf(
+  FinalSBc ~ slope * EP + BodyMassz + (1|CGsite),
+  family = gaussian()
+)
+
+#Model iv:
+form_burden_no_bodymass <- bf(
+  FinalSBc ~ slope * EP + Stage + (1|CGsite),
+  family = gaussian()
 )
 
 ```
 
+```{r}
+#Specifying weakly informative priors for all candidate models:
+prior_finalSB_site <- c(
+  set_prior("normal(0, 0.5)", class = "b"),               
+  set_prior("student_t(3, 0, 1)", class = "Intercept"),  
+  set_prior("student_t(3, 0, 1)", class = "sigma"),       
+  set_prior("student_t(3, 0, 1)", class = "sd", group = "CGsite") 
+)
+```
 
 ```{r}
-fit_FinalSB_slope_int <- brm(
-  FinalSBc ~ EP * slope + Stage + BodyMassz + (1 | CGsite),
-  data   = df_slope_predictors,
+#Subsetting data for LOO comparisons only
+#Selected model will be fit with full dataset
+df_slope_predictors_cc <- df_slope_predictors %>%
+  filter(complete.cases(FinalSBc, slope, EP, Stage, BodyMassz, CGsite))
+```
+
+```{r}
+#Candidate model fitting:
+
+#Model i:
+fit_FinalSB_slope_orig_loo <- brm(
+  formula = form_burden_ep_only,
+  data   = df_slope_predictors_cc,
   family = gaussian(),
-  prior  = prior_finalSB_site, 
+  prior  = prior_finalSB_site,
   chains = 4,
-  iter   = 4000,
-  warmup = 2000,
+  iter   = 6000,
+  warmup = 3000,
   cores = 4,
   threads = threading(2),
-  control = list(adapt_delta = 0.99),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  seed = 777
+)
+
+#Model ii:
+fit_burden_full_loo <- brm(
+  formula = form_burden_full,
+  data   = df_slope_predictors_cc,
+  family = gaussian(),
+  prior  = prior_finalSB_site,
+  chains = 4,
+  iter   = 6000,
+  warmup = 3000,
+  cores = 4,
+  threads = threading(2),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  seed = 777
+)
+
+#Model iii:
+fit_burden_no_stage_loo <- brm(
+  formula = form_burden_no_stage,
+  data   = df_slope_predictors_cc,
+  family = gaussian(),
+  prior  = prior_finalSB_site,
+  chains = 4,
+  iter   = 6000,
+  warmup = 3000,
+  cores = 4,
+  threads = threading(2),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  seed = 777
+)
+
+#Model iv:
+fit_burden_no_bodymass_loo <- brm(
+  formula = form_burden_no_bodymass,
+  data   = df_slope_predictors_cc,
+  family = gaussian(),
+  prior  = prior_finalSB_site,
+  chains = 4,
+  iter   = 6000,
+  warmup = 3000,
+  cores = 4,
+  threads = threading(2),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
   seed = 777
 )
 ```
 
 ```{r}
-summary(fit_FinalSB_slope_int)
-ce_slope <- conditional_effects(fit_FinalSB_slope_int, effects = "slope")
+#LOO comparison:
+fit_FinalSB_slope_orig_loo <- add_criterion(fit_FinalSB_slope_orig_loo, "loo")
+fit_burden_full_loo <- add_criterion(fit_burden_full_loo, "loo")
+fit_burden_no_stage_loo <- add_criterion(fit_burden_no_stage_loo, "loo")
+fit_burden_no_bodymass_loo <- add_criterion(fit_burden_no_bodymass_loo, "loo")
+
+loo_compare(fit_FinalSB_slope_orig_loo, fit_burden_full, fit_burden_no_stage_loo, fit_burden_no_bodymass_loo)
+
+print(fit_FinalSB_slope_orig_loo$criteria$loo)
+print(fit_burden_full_loo$criteria$loo)
+print(fit_burden_no_stage_loo$criteria$loo)
+print(fit_burden_no_bodymass_loo$criteria$loo)
+
+#Model comparison chart
+loo_list_SB <- list(
+  fit_FinalSB_slope_orig_loo = fit_FinalSB_slope_orig_loo$criteria$loo,
+  fit_burden_no_bodymass_loo = fit_burden_no_bodymass_loo$criteria$loo,
+  fit_burden_no_stage_loo    = fit_burden_no_stage_loo$criteria$loo,
+  fit_burden_full_loo       = fit_burden_full_loo$criteria$loo
+)
+
+loo_summary_SB <- purrr::map_dfr(loo_list_SB, function(x) {
+  e <- x$estimates
+  tibble::tibble(
+    elpd_loo    = e["elpd_loo","Estimate"], se_elpd_loo = e["elpd_loo","SE"],
+    p_loo       = e["p_loo","Estimate"],    se_p_loo    = e["p_loo","SE"],
+    looic       = e["looic","Estimate"],    se_looic    = e["looic","SE"]
+  )
+}, .id = "Model")
+
+comp_SB <- loo_compare(fit_FinalSB_slope_orig_loo, fit_burden_no_bodymass_loo,
+                     fit_burden_no_stage_loo, fit_burden_full_loo)
+comp_df_SB <- as.data.frame(comp_SB) %>%
+  tibble::rownames_to_column("Model") %>%
+  dplyr::select(Model, elpd_diff, se_diff)
+
+loo_table_SB <- dplyr::left_join(loo_summary_SB, comp_df, by = "Model")
+
+loo_table_SB <- loo_table_SB %>%
+  dplyr::mutate(Model = dplyr::recode(Model,
+    fit_FinalSB_slope_orig_loo = "Minimal (slope*EP)",
+    fit_burden_no_bodymass_loo = "No BodyMassz",
+    fit_burden_no_stage_loo    = "No Stage",
+    fit_burden_full_loo         = "Full (+ Stage + BodyMassz)"
+  ))
+
+loo_table_SB
+```
+
+
+#Model 2 fitting:
+```{r}
+fit_FinalSB_slope_orig <- brm(
+  formula = form_burden_ep_only,
+  data   = df_slope_predictors,
+  family = gaussian(),
+  prior  = prior_finalSB_site,
+  chains = 4,
+  iter   = 6000,
+  warmup = 3000,
+  cores = 4,
+  threads = threading(2),
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  seed = 777
+)
+```
+
+```{r}
+summary(fit_FinalSB_slope_orig)
+ce_slope <- conditional_effects(fit_FinalSB_slope_orig, effects = "slope")
 plot(ce_slope)
-ce_slope_EP <- conditional_effects(fit_FinalSB_slope_int, effects = "slope:EP")
+ce_slope_EP <- conditional_effects(fit_FinalSB_slope_orig, effects = "slope:EP")
 plot(ce_slope_EP)
 
-mcmc_plot(fit_FinalSB_slope_int, type = "trace")
-pp_check(fit_FinalSB_slope_int)
-pp_check(fit_FinalSB_slope_int, type = "stat", stat = "mean") 
-pp_check(fit_FinalSB_slope_int, type = "stat_grouped", group = "CGsite", stat = "mean")
+mcmc_plot(fit_FinalSB_slope_orig, type = "trace")
+pp_check(fit_FinalSB_slope_orig)
+pp_check(fit_FinalSB_slope_orig, type = "stat", stat = "mean") 
+pp_check(fit_FinalSB_slope_orig, type = "stat_grouped", group = "CGsite", stat = "mean")
 ```
 
 ```{r session-info}
 sessionInfo()
 ```
+

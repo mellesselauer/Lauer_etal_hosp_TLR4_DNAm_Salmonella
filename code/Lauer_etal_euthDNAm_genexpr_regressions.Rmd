@@ -1,0 +1,157 @@
+---
+title: "DNA methylation at euthanasia and gene expression correlations"
+author: "M. Ellesse Lauer"
+date: "2026-08-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+df_tissue_euthgex <- read.csv("../data/Lauer_etal_hosp_tissues_DNAm_euthgex.csv")
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(tibble)
+```
+
+
+#Shapiro-Wilks tests for each tissue's gene expression normality
+```{r}
+expr_bird_level_prox <- df_tissue_euthgex %>% distinct(BirdID, .keep_all = FALSE, TLR4_RQ_proximal_intestine)
+shapiro.test(expr_bird_level_prox$TLR4_RQ_proximal_intestine)
+```
+
+```{r}
+expr_bird_level_med <- df_tissue_euthgex %>% distinct(BirdID, .keep_all = FALSE, TLR4_RQ_medial_intestine)
+shapiro.test(expr_bird_level_med$TLR4_RQ_medial_intestine)
+
+```
+
+```{r}
+expr_bird_level_dist <- df_tissue_euthgex %>% distinct(BirdID, .keep_all = FALSE, TLR4_RQ_distal_intestine)
+shapiro.test(expr_bird_level_dist$TLR4_RQ_distal_intestine)
+
+```
+
+```{r}
+expr_bird_level_cecum <- df_tissue_euthgex %>% distinct(BirdID, .keep_all = FALSE, TLR4_RQ_cecum)
+shapiro.test(expr_bird_level_cecum$TLR4_RQ_cecum)
+
+```
+
+```{r}
+#Log10 transforming for distal intestine and cecum TLR4 expression (no 0s from the RQ gene expression data)
+#log(x+1) for medial and proximal intestine - 15 birds had 0 RQ gex - indicates about half the birds were below detectable threshold for TLR4 gene expression
+df_tissue_euthgex <- df_tissue_euthgex %>%
+  mutate(
+    TLR4_RQ_proximal_intestine_log = log(TLR4_RQ_proximal_intestine + 1),
+    TLR4_RQ_medial_intestine_log   = log(TLR4_RQ_medial_intestine + 1),
+    TLR4_RQ_distal_intestine_log   = log(TLR4_RQ_distal_intestine),      # no zeros here — plain log is fine
+    TLR4_RQ_cecum_log              = log(TLR4_RQ_cecum)                  # no zeros here — plain log is fine
+  )
+
+```
+
+
+```{r}
+source_tissues <- c("blood", "liver", "spleen")
+cpg_sites      <- c("CG01", "CG02", "CG03", "CG04", "CG05")
+expr_cols_log      <- c("TLR4_RQ_proximal_intestine_log", "TLR4_RQ_medial_intestine_log",
+                     "TLR4_RQ_distal_intestine_log", "TLR4_RQ_cecum_log")
+
+combos <- expand.grid(
+  tissue_val = source_tissues,
+  site_val   = cpg_sites,
+  expr_col   = expr_cols_log,
+  stringsAsFactors = FALSE
+)
+
+```
+
+
+```{r}
+#Multiple regression of all 5 CpG sites as simultaneous predictors, one model per tissue pair - 12 linear regressions
+#Blood models: (CpG 4 and CpG 5 were not variably methylated for blood at euthanasia)
+# expression ~ DNAm of CpG 1 + DNAm of CpG 2 + DNAm of CpG 3 
+#Liver models:
+# expression ~ DNAm of CpG 1 + DNAm of CpG 2 + DNAm of CpG 3 + DNAm of CpG 4 + DNAm of CpG 5
+#Spleen models: (CpG 4 and CpG 5 were not variably methylated for spleen at euthanasia)
+# expression ~ DNAm of CpG 1 + DNAm of CpG 2 + DNAm of CpG 3
+
+# One wide (bird-level) dataset per source tissue: 5 CpG columns + 4 expression columns
+wide_by_tissue <- purrr::map(source_tissues, function(tissue_val) {
+  df_tissue_euthgex %>%
+    filter(Tissue == tissue_val) %>%
+    select(BirdID, SiteEuth, DNAm, all_of(expr_cols_log)) %>%
+    pivot_wider(id_cols = c(BirdID, all_of(expr_cols_log)), names_from = SiteEuth, values_from = DNAm)
+})
+names(wide_by_tissue) <- source_tissues
+# Which CpG sites actually have variance in each tissue
+sites_by_tissue <- purrr::map(wide_by_tissue, function(dat) {
+  sds <- dat %>% summarise(across(all_of(cpg_sites), ~sd(.x, na.rm = TRUE))) %>% unlist()
+  names(sds)[sds > 0 & !is.na(sds)]
+})
+sites_by_tissue   # confirm: blood = CG01-03, liver = CG01-05, spleen = CG01-03
+```
+
+```{r}
+# Fit one lm() per source tissue x expression tissue (12 models total)
+model_combos <- expand.grid(tissue_val = source_tissues, expr_col = expr_cols_log, stringsAsFactors = FALSE)
+
+pattern_models <- purrr::pmap(model_combos, function(tissue_val, expr_col) {
+  sites_use <- sites_by_tissue[[tissue_val]]
+  dat <- wide_by_tissue[[tissue_val]] %>% tidyr::drop_na(all_of(c(sites_use, expr_col)))
+  lm(reformulate(sites_use, response = expr_col), data = dat)
+})
+names(pattern_models) <- paste(model_combos$tissue_val, model_combos$expr_col, sep = "_")
+```
+
+```{r}
+# Summary table: one omnibus F-test per tissue pair (the 12 tests)
+model_summary <- purrr::map2_dfr(pattern_models, names(pattern_models), function(mod, nm) {
+  f <- summary(mod)$fstatistic
+  tibble::tibble(
+    Model     = nm,
+    n         = nobs(mod),
+    R2        = summary(mod)$r.squared,
+    Overall_F = f[1], df1 = f[2], df2 = f[3],
+    Overall_p = pf(f[1], f[2], f[3], lower.tail = FALSE)
+  )
+})
+
+model_summary <- model_summary %>%
+  mutate(p_fdr = p.adjust(Overall_p, method = "BH"))
+
+model_summary
+```
+
+```{r}
+car::vif(pattern_models[["blood_TLR4_RQ_proximal_intestine_log"]])
+```
+
+```{r}
+# Zero-variance check — the more likely cause given CG04/CG05's established low prevalence
+wide_by_tissue$blood %>% summarise(across(CG01:CG05, ~sd(.x, na.rm = TRUE)))
+
+# Perfect pairwise collinearity check — two sites always matching exactly
+wide_by_tissue$blood %>% select(CG01:CG05) %>% cor(use = "pairwise.complete.obs")
+```
+
+```{r}
+#Partial oefficients of the individual CpG sites within the regressions
+site_coefs <- purrr::map_dfr(pattern_models, broom::tidy, .id = "Model") %>%
+  filter(term != "(Intercept)")
+
+site_coefs <- site_coefs %>%
+  mutate(p_fdr = p.adjust(p.value, method = "BH"))
+
+site_coefs
+```
+

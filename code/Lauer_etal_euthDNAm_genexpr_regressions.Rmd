@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-df_tissue_euthgex <- read.csv("../data/Lauer_etal_hosp_tissues_DNAm_euthgex.csv")
+df_tissue_euthgex <- read.csv("../data/hosp_tissues_DNAm_euthgex_R2.csv")
 ```
 
 
@@ -154,4 +154,5 @@ site_coefs <- site_coefs %>%
 
 site_coefs
 ```
+
 

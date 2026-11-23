@@ -18,6 +18,8 @@ Three Bayesian generalized linear mixed models (GLMMs) were fit using the `brms`
 - **Model 2** — Final *Salmonella* burden predicted by individual slopes of DNA methylation change derived from Model 1 (Gaussian)
 - **Model 3** — DNA methylation among tissues at euthanasia (Bernoulli, logit link)
 
+We compare gene expression of TLR4 in gut tissues at euthanasia to DNA methylation of the blood, liver, and spleen at euthanasia using multiple linear regressions (expression ~ CpG 1 + CpG 2 + CpG 3 + CpG 4 + CpG 5) using the ‘lm()’ function in R (v4.5.0). 
+
 Full model specifications, formal notation, priors, code, and posterior predictive checks are provided in the supplemental methods file. Variable names used in R code correspond to manuscript labels as described in Table S1 of the supplemental methods.
 
 ---
@@ -27,10 +29,9 @@ Full model specifications, formal notation, priors, code, and posterior predicti
 ```
 Lauer_etal_TLR4_DNAm_Salmonella/
 ├── data/
-│   ├── DNAm_SB_data_summary_full.csv
-│   ├── DNAm_blood_finalSB.csv
-│   └── DNAm_euthanasia_data.csv
-│   └── hosp_tissues_DNAm_euthgex.csv
+│   ├── DNAm_SB_data_summary_full_R2.csv
+│   ├── DNAm_blood_finalSB_R2.csv
+│   └── hosp_tissues_DNAm_euthgex_R2.csv
 ├── code/
 │   ├── Lauer_etal_DNAm_blood_models1_2.Rmd
 │   ├── Lauer_etal_DNAm_tissue_model3.Rmd
@@ -46,12 +47,12 @@ Lauer_etal_TLR4_DNAm_Salmonella/
 
 ## Data Files
 
-### `data/DNAm_SB_data_summary_full.csv`
-Bird-level summary reference file. One row per individual (n = 36). Contains biological stage, epigenetic potential (EP) category, body mass, average and final *Salmonella* burden, daily rates of change in *Salmonella* burden and DNA methylation, average and variance of DNA methylation per tissue at euthanasia, and per-CpG binary methylation values across all time points and tissues. This file is provided for reference and is not read by the analysis code. Column names are embedded in row 1 of the data; when reading into R use `skip = 1` or open directly in Excel.
+### `data/DNAm_SB_data_summary_full_R2.csv`
+Bird-level summary reference file. One row per individual (n = 36). Contains biological stage, epigenetic potential (EP) category, EP count (CpG counts of homologous regions in putative promoter of *TLR4*), body mass, average and final *Salmonella* burden, daily rates of change in *Salmonella* burden and DNA methylation, average and variance of DNA methylation per tissue at euthanasia, and per-CpG binary methylation values across all time points and tissues. This file is provided for reference and is not read by the analysis code. Column names are embedded in row 1 of the data; when reading into R use `skip = 1` or open directly in Excel.
 
 ---
 
-### `data/DNAm_blood_finalSB.csv`
+### `data/DNAm_blood_finalSB_R2.csv`
 Long-format raw blood DNA methylation time series. One row per bird × CpG site × time point combination (1,155 rows total). Missing values excluded listwise. This is the input in `Lauer_etal_DNAm_blood_models1_2.Rmd`.
 
 | Column | Description |
@@ -60,6 +61,7 @@ Long-format raw blood DNA methylation time series. One row per bird × CpG site 
 | Stage | Biological stage (Female, Male, Juvenile) |
 | BodyMass | Body mass in grams (70 NAs — one bird missing covariate data) |
 | EP | Epigenetic potential category (high, low) |
+| countEP | Epigenetic potential numeric (6, 7, 8, 9, or 10) |
 | FinalSB | Final *Salmonella* burden at euthanasia (log₁₀ genomic equivalents) |
 | timeday | Collection time point in raw days (0, 0.25, 1, 6, 9, 12, 14) |
 | CGsite | CpG site identity (CG01–CG05; reference in models: CG01) |
@@ -67,9 +69,8 @@ Long-format raw blood DNA methylation time series. One row per bird × CpG site 
 
 ---
 
-### `data/DNAm_euthanasia_data.csv`
-Long-format DNA methylation data at euthanasia across three tissues. One row per bird × tissue × CpG site combination (540 rows total). Missing values excluded listwise. This is the input in `Lauer_etal_DNAm_tissue_model3.Rmd`.
-
+### `data/hosp_tissues_DNAm_euthgex_R2.csv`
+Long-format DNA methylation at euthanasia and gene expression for distal intestine, proximal intestine, medial intestine, and caecum tissues at euthanasia. One row per bird × tissue × CpG site combination (540 rows total). Missing values excluded listwise. This is the input in `Lauer_etal_DNAm_tissue_model3.Rmd` and `Lauer_etal_euthDNAm_genexpr_regressions.Rmd`.
 | Column | Description |
 |---|---|
 | BirdID | Individual bird identifier |
@@ -77,19 +78,7 @@ Long-format DNA methylation data at euthanasia across three tissues. One row per
 | BodyMass | Body mass in grams (30 NAs expected) |
 | Stage | Biological stage (Female, Male, Juvenile) |
 | EP | Epigenetic potential category (high, low) |
-| Tissue | Tissue type (blood, liver, spleen; reference in models: blood) |
-| SiteEuth | CpG site identity (CG01–CG05; reference in models: CG01) |
-| DNAm | Binary DNA methylation state (0 = unmethylated, 1 = methylated; NA = excluded listwise) |
-
-### `data/hosp_tissues_DNAm_euthgex.csv`
-Long-format DNA methylation at euthanasia and gene expression for distal intestine, proximal intestine, medial intestine, and caecum tissues at euthanasia. One row per bird × tissue × CpG site combination (540 rows total). Missing values excluded listwise. This is the input in `Lauer_etal_euthDNAm_genexpr_regressions.Rmd`.
-| Column | Description |
-|---|---|
-| BirdID | Individual bird identifier |
-| FinalSB | Final *Salmonella* burden (log₁₀ genomic equivalents; 45 NAs expected) |
-| BodyMass | Body mass in grams (30 NAs expected) |
-| Stage | Biological stage (Female, Male, Juvenile) |
-| EP | Epigenetic potential category (high, low) |
+| countEP | Epigenetic potential numeric (6, 7, 8, 9, or 10) |
 | Tissue | Tissue type (blood, liver, spleen; reference in models: blood) |
 | SiteEuth | CpG site identity (CG01–CG05; reference in models: CG01) |
 | DNAm | Binary DNA methylation state (0 = unmethylated, 1 = methylated; NA = excluded listwise) |
@@ -112,7 +101,7 @@ RMarkdown script for Model 3. Reads `Lauer_etal_DNAm_euthanasia_data.csv`, perfo
 ### `code/Lauer_etal_euthDNAm_genexpr_regressions.Rmd`
 RMarkdown script for multiple regressions of gene expression in euthanasia tissues and DNA methylation from blood, liver, and spleen. Reads `Lauer_etal_hosp_tissues_DNAm_euthgex.csv`, performs Shapiro-Wilks tests for normality in gene expression data, runs multiple regressions for gene expression and DNA methylation among all tissues (12 models).
 
-### `code/Lauer_etal_supplemental_methods_full.docx`
+### `code/Lauer_etal_supplemental_methods_full_R2.docx`
 Supplemental methods document containing: variable mapping table (Table S1) linking R variable names to manuscript labels; full model comparisons, full model specifications with formal mathematical notation; model fitting, slope extraction, repeated measures correlations `rmcorr` and `emmeans` contrast code, multiple regressions for gene expression and DNA methylation at euthanasia across all sampled tissues; convergence and posterior predictive check figures (Figures S1–S20); and supplemental model output tables (Tables S2–S7).
 
 

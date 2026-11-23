@@ -27,7 +27,7 @@ options(brms.backend = "cmdstanr") #cmdstanr version 0.8.0, Stan backend for brm
 
 ```{r}
 #Data loading:
-df_blood <- read.csv("../data/Lauer_etal_DNAm_blood_finalSB.csv")
+df_blood <- read.csv("../data/DNAm_blood_finalSB_R2.csv")
 ```
 
 ```{r}
@@ -584,4 +584,5 @@ pp_check(fit_FinalSB_slope_orig, type = "stat_grouped", group = "CGsite", stat =
 ```{r session-info}
 sessionInfo()
 ```
+
 
